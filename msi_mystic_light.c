@@ -59,6 +59,7 @@ struct msi_ml_board {
 	const char *const *in_label;
 	/* little endian u16 in mV, offset at most MSI_ML_SENSOR_REPORT_SIZE - 2 */
 	const u8 *in_offset;
+	int (*read_report)(struct msi_ml_data *priv);
 };
 
 /*
@@ -67,7 +68,7 @@ struct msi_ml_board {
  * hwmon core serializes. No additional locking is needed for the buffer
  * and the cached values.
  */
-static int msi_ml_read_report(struct msi_ml_data *priv)
+static int msi_ml_read_report_7e61(struct msi_ml_data *priv)
 {
 	const struct msi_ml_board *board = priv->board;
 	u8 *buf = priv->buf;
@@ -76,16 +77,9 @@ static int msi_ml_read_report(struct msi_ml_data *priv)
 	memset(buf, 0, MSI_ML_SENSOR_REPORT_SIZE);
 	buf[0] = MSI_ML_SENSOR_REPORT_ID;
 
-	/* Make sure the device is not autosuspended during the request */
-	ret = hid_hw_power(priv->hdev, PM_HINT_FULLON);
-	if (ret < 0)
-		return ret;
-
 	ret = hid_hw_raw_request(priv->hdev, MSI_ML_SENSOR_REPORT_ID, buf,
 				 MSI_ML_SENSOR_REPORT_SIZE, HID_FEATURE_REPORT,
 				 HID_REQ_GET_REPORT);
-
-	hid_hw_power(priv->hdev, PM_HINT_NORMAL);
 
 	if (ret < 0)
 		return ret;
@@ -102,6 +96,24 @@ static int msi_ml_read_report(struct msi_ml_data *priv)
 		priv->in[i] = get_unaligned_le16(buf + board->in_offset[i]);
 
 	priv->updated = get_jiffies_64();
+
+	return 0;
+}
+
+static int msi_ml_read_report(struct msi_ml_data *priv)
+{
+	int ret;
+
+	/* Make sure the device is not autosuspended during the request */
+	ret = hid_hw_power(priv->hdev, PM_HINT_FULLON);
+	if (ret < 0)
+		return ret;
+
+	ret = priv->board->read_report(priv);
+	if (ret)
+		return ret;
+
+	hid_hw_power(priv->hdev, PM_HINT_NORMAL);
 
 	return 0;
 }
@@ -273,6 +285,7 @@ static const struct msi_ml_board msi_ml_7e61 = {
 	.num_in = ARRAY_SIZE(msi_ml_7e61_in_label),
 	.in_label = msi_ml_7e61_in_label,
 	.in_offset = msi_ml_7e61_in_offset,
+	.read_report = msi_ml_read_report_7e61,
 };
 
 static const struct dmi_system_id msi_ml_dmi_table[] __initconst = {
